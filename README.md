@@ -26,36 +26,26 @@ The additional parameters can be varied as per above>. For example, to change th
 
 
 # Options
-    usage: ms1FingerPrinter.py [-h] [--outDirectory OUTDIRECTORY]
-                               [--outPrefix OUTPREFIX] [--ppm PPM]
-                               [--minFrac MINFRAC] [--missed MISSED]
-                               [--minLength MINLENGTH] [--maxCharge MAXCHARGE]
-                               [--minCharge MINCHARGE] [--numClusters NUMCLUSTERS]
-                               [--noZtransform]
+    usage: ms1FingerPrinter.py [-h] [--outDirectory OUTDIRECTORY] [--outPrefix OUTPREFIX] [--ppm PPM] 
+                               [--minFrac MINFRAC] [--missed MISSED] [--minLength MINLENGTH] [--maxCharge MAXCHARGE]
+                               [--minCharge MINCHARGE] [--numClusters NUMCLUSTERS] [--noZtransform] [--normaliseIntensities]
                                fasta mzml
 
     Find signals in MS1 data matching tryptic peptides
 
     positional arguments:
       fasta                 FASTA sequence file for target protein
-      mzml                  Directory containing one or more mzML files to be
-                            analysed
+      mzml                  Directory containing one or more mzML files to be analysed
 
     optional arguments:
       -h, --help            show this help message and exit
       --outDirectory OUTDIRECTORY
-                            Directory to which output file should be written.
-                            Defaults to mzml directory if not specified
+                            Directory to which output file should be written. Defaults to mzml directory if not specified
       --outPrefix OUTPREFIX
-                            File name prefix given to generated outputs. Defaults
-                            to a timestamp if not specified
-      --ppm PPM             MS1 ppm tolerance for expected monoisotopic masses.
-                            Window is +/- ppm
-      --minFrac MINFRAC     Minimum fraction (0-1) of MS1 spectra in which a given
-                            target ion must be present for further consideration
-                            in the analysis
-      --missed MISSED       Number of missed enzymatic cleavages to allow for in
-                            silico protein digestion
+                            File name prefix given to generated outputs. Defaults to a timestamp if not specified
+      --ppm PPM             MS1 ppm tolerance for expected monoisotopic masses. Window is +/- ppm
+      --minFrac MINFRAC     Minimum fraction (0-1) of MS1 spectra in which a given target ion must be present for further consideration in the analysis
+      --missed MISSED       Number of missed enzymatic cleavages to allow for in silico protein digestion
       --minLength MINLENGTH
                             Minimum peptide length for consideration in analysis
       --maxCharge MAXCHARGE
@@ -65,6 +55,9 @@ The additional parameters can be varied as per above>. For example, to change th
       --numClusters NUMCLUSTERS
                             Number of clusters to produce in HCA analysis
       --noZtransform        Do not perform z-transform on peptide intensity values
+      --normaliseIntensities
+                            Normalise target intensity values to spectral maxima
+
 
 
 # Requirements

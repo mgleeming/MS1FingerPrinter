@@ -8,10 +8,8 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-from sklearn.decomposition import PCA
-from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
-from sklearn.cluster import KMeans, AgglomerativeClustering
-from scipy.stats import zscore, ttest_ind, f_oneway
+from sklearn.cluster import AgglomerativeClustering
+from scipy.stats import zscore
 
 IAA_MOD_MASS = mass.calculate_mass(formula='CH2CONH')
 
@@ -68,6 +66,12 @@ argparser.add_argument('--numClusters',
 argparser.add_argument('--noZtransform',
                    action = 'store_true',
                    help = 'Do not perform z-transform on peptide intensity values')
+
+# data
+argparser.add_argument('--normaliseIntensities',
+                   action = 'store_true',
+                   help = 'Normalise target intensity values to spectral maxima')
+
 
 options = argparser.parse_args()
 
@@ -153,7 +157,7 @@ def findPeptideIntensities():
     peptides = digetsProteinFromFASTA()
 
     files = os.listdir(options.mzml)
-    dataFiles = [x for x in files if '.mzml' in x.lower()]
+    dataFiles = sorted([x for x in files if '.mzml' in x.lower()])
 
     for dataFile in dataFiles:
         print('Processing %s' %dataFile)
@@ -164,6 +168,8 @@ def findPeptideIntensities():
         for n, spec in enumerate(run):
             mzs = spec.mz
             ints = spec.i
+
+            scanMaxIntensity = ints.max()
 
             for p in peptides:
                 for t in p.targetList:
@@ -176,7 +182,11 @@ def findPeptideIntensities():
                         # max values align with fresstyle ion counts better
                         # makes result easier to check
                         # is there any downside here?
-                        t.setIntensity(dataFile, ints[mask].max())
+
+                        if options.normaliseIntensities:
+                            t.setIntensity(dataFile, ints[mask].max() / scanMaxIntensity * 100)
+                        else:
+                            t.setIntensity(dataFile, ints[mask].max())
 
                     t.updateTargetScanCounter(dataFile)
 
@@ -221,7 +231,6 @@ def findPeptideIntensities():
 
 
 def doClustering(df):
-
 
     # create subset from quantification columns
     quantDF, cbLabel, quantCols = getQuantDataFrame(df)
