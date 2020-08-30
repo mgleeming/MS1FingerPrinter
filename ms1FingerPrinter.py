@@ -1,5 +1,5 @@
 
-import os, io, sys, pymzml, argparse, time
+import os, io, sys, pymzml, argparse, time, math
 
 from pyteomics import fasta, parser, mass
 
@@ -8,8 +8,9 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 
+from sklearn.decomposition import PCA
 from sklearn.cluster import AgglomerativeClustering
-from scipy.stats import zscore
+from scipy.stats import zscore, ttest_ind, f_oneway
 
 IAA_MOD_MASS = mass.calculate_mass(formula='CH2CONH')
 
@@ -71,6 +72,14 @@ argparser.add_argument('--noZtransform',
 argparser.add_argument('--normaliseIntensities',
                    action = 'store_true',
                    help = 'Normalise target intensity values to spectral maxima')
+argparser.add_argument('--logIntensities',
+                   action = 'store_true',
+                   help = 'Log 10 transform target intensity values.')
+argparser.add_argument('--pvalThreshold',
+                    type = float,
+                    default = 1,
+                    help = 'Negative Log 10 p-value threshold required of peptides for inclusion')
+
 
 
 options = argparser.parse_args()
@@ -95,23 +104,16 @@ class Target(object):
         return
 
     def setIntensity(self, file, value):
-        if not value:
-            try:
-                assert file in self.targetIntensityDIct.keys()
-                return
-            except:
-                self.targetIntensityDIct[file] = []
-                return
         try:
             self.targetIntensityDIct[file].append( value )
         except KeyError:
             self.targetIntensityDIct[file] = [ value ]
         return
 
-    def updateTargetScanCounter(self, file):
+    def incrementTargetScanCounter(self, file):
         try:
             self.targetScanCounter[file] += 1
-        except KeyError:
+        except:
             self.targetScanCounter[file] = 1
         return
 
@@ -177,18 +179,23 @@ def findPeptideIntensities():
                         (mzs > t.targetLL) & (mzs < t.targetHL))
 
                     if len(ints[mask]) == 0:
-                        t.setIntensity(dataFile, None)
+                        t.setIntensity(dataFile, 0)
                     else:
                         # max values align with fresstyle ion counts better
                         # makes result easier to check
                         # is there any downside here?
+                        dataPoint = ints[mask].max()
 
                         if options.normaliseIntensities:
-                            t.setIntensity(dataFile, ints[mask].max() / scanMaxIntensity * 100)
+                            dataPoint = ints[mask].max() / scanMaxIntensity * 100
+                        if options.logIntensities and dataPoint >= 1:
+                            dataPoint = math.log10(dataPoint)
                         else:
-                            t.setIntensity(dataFile, ints[mask].max())
+                            dataPoint = 0
 
-                    t.updateTargetScanCounter(dataFile)
+                        t.setIntensity(dataFile, dataPoint)
+
+                    t.incrementTargetScanCounter(dataFile)
 
     of1 = io.StringIO()
 
@@ -203,11 +210,14 @@ def findPeptideIntensities():
             for dataFile in dataFiles:
                 # quite a bit of bouncy-ness to the data
                 # --- require that any peak be present in > some fraction of all scans
-                if len(t.targetIntensityDIct[dataFile]) < t.targetScanCounter[dataFile] * options.minFrac:
+
+                pointValues = [pv for pv in t.targetIntensityDIct[dataFile] if pv != 0]
+
+                if len(pointValues) < len(t.targetIntensityDIct[dataFile]) * options.minFrac:
                     quantVals.append(0)
                 else:
                     # not all file have same # of scans - average
-                    quantVals.append(int(sum(t.targetIntensityDIct[dataFile])/len(t.targetIntensityDIct[dataFile])))
+                    quantVals.append(int(sum(pointValues))/ len(pointValues))
 
             # don't write any peptides/charge states that are not observed
             # in at least one sample
@@ -227,13 +237,37 @@ def findPeptideIntensities():
     df['key'] = df['peptide'] + '_+' + df['charge'].astype(str)
     df = df.set_index('key')
 
-    return df
+    return df, dataFiles, peptides
 
 
-def doClustering(df):
+def doClustering(df, dataFiles, resultsDir):
 
     # create subset from quantification columns
     quantDF, cbLabel, quantCols = getQuantDataFrame(df)
+
+    groups = ['DMSO', 'Hex', 'additive']
+
+    groupMap = {}
+
+    for g in groups:
+        for dataFile in dataFiles:
+            if g in dataFile:
+                try:
+                    groupMap[g].append(dataFile)
+                except:
+                    groupMap[g] = [dataFile]
+
+    significantRows = []
+    for index, row in quantDF.iterrows():
+        groupedRowData = [row[entries].to_list() for entries in groupMap.values()]
+        f, pval = f_oneway(*groupedRowData)
+        nlogp = math.log10(pval) * -1
+
+        if nlogp > options.pvalThreshold:
+            significantRows.append(index)
+
+    quantDF = quantDF[quantDF.index.isin(significantRows)]
+    df = df[df.index.isin(significantRows)]
 
     cluster = AgglomerativeClustering(n_clusters = options.numClusters)
     cluster.fit_predict(quantDF)
@@ -254,13 +288,12 @@ def doClustering(df):
         quantDF, cmap = 'coolwarm', cbar_kws={'label': cbLabel}, row_colors = row_colors)
 
     # write figure to file
-    outFigure = os.path.join(
-        options.outDirectory, options.outPrefix + '_clustermap')
+    outFigure = os.path.join(resultsDir, options.outPrefix + '_clustermap')
 
     savefig(plot, plot, outFigure)
 
     # write data frame to excel file
-    outExcelFile = os.path.join(options.outDirectory, options.outPrefix + '_datatable.xlsx')
+    outExcelFile = os.path.join(resultsDir, options.outPrefix + '_datatable.xlsx')
 
     df = df.sort_values('cluster')
     writer = pd.ExcelWriter(outExcelFile, engine='xlsxwriter')
@@ -297,28 +330,21 @@ def doClustering(df):
     writer.save()
     return df, lut
 
-def doAnalysis(clusterMatrix,lut):
+def doAnalysis(clusterMatrix, lut, resultsDir):
 
     quantDF, cbLabel, quantCols = getQuantDataFrame(clusterMatrix)
-
-    # density Plots
-    densityDirectory = os.path.join(options.outDirectory, 'density' )
-    try:
-        os.mkdir( os.path.join(options.outDirectory, 'density' ))
-    except FileExistsError:
-        pass
 
     targetColumns = ['cluster', 'length', 'charge','mz', 'neutral_peptide_mass']
 
     subClusterMatrix = clusterMatrix[targetColumns]
     densityPlot = sns.pairplot( data=subClusterMatrix, hue = 'cluster', palette = lut)
-    savefig(densityPlot, densityPlot, os.path.join(densityDirectory, "pairs.png"))
+    savefig(densityPlot, densityPlot, os.path.join(resultsDir, "pairs.png"))
 
     sns.set_style("darkgrid")
     fig, ax = plt.subplots()
     catPlot = sns.countplot(x="charge",  data=clusterMatrix, hue = 'cluster', palette = lut, ax = ax)
     ax.legend(loc='upper right')
-    savefig(catPlot, fig, os.path.join(densityDirectory, "cluster_charge_histogram.png"))
+    savefig(catPlot, fig, os.path.join(resultsDir, "cluster_charge_histogram.png"))
 
 def getQuantDataFrame(df):
     quantCols = [x for x in list(df) if '.mzml' in x.lower()]
@@ -363,6 +389,59 @@ def savefig(plot, fig, path, resolution = 400):
                 # hope for the best
                 return
 
+
+def appendToDict(d, key, value):
+    try:
+        d[key].append(value)
+    except:
+        d[key] = [value]
+    return
+
+def doPCAs(peptides, dataFiles, resultsDir):
+
+    pcaData = {}
+
+    for dataFile in dataFiles:
+
+        for i in range(len(peptides[0].targetList[0].targetIntensityDIct[dataFile])):
+            appendToDict(pcaData, 'dataFile', dataFile)
+
+        for p in peptides:
+            for t in p.targetList:
+                for v in t.targetIntensityDIct[dataFile]:
+                    key = '%s_%s'%(p.peptide, t.charge)
+                    appendToDict(pcaData, key, v)
+
+    pcaDataFrame = pd.DataFrame(pcaData, columns = list(pcaData.keys()))
+
+    Y = pcaDataFrame.pop('dataFile')
+    X = pcaDataFrame
+
+    # returns first N_compoents principal components
+    pca = PCA(n_components=2)
+
+    # trailing .transform() needed to return actual values
+    # otherwise returns object
+    # gives array of num features (samples) rows by num components cols
+    X_r = pca.fit(X).transform(X)
+
+    # to shade points in plot by saple group
+    # need to subset plots
+    # get truth mask for which rows in X-r array correspond to each group
+    fig, ax = plt.subplots()
+
+    groups = set(list(Y.to_list()))
+    for group in groups:
+        mask = Y.isin([group])
+        pcaPlot = ax.scatter(X_r[mask,0], X_r[mask,1], label = group)
+
+    ax.legend()
+    ax.set_xlabel('PC1 (%.1f%%)' %(pca.explained_variance_ratio_[0]*100))
+    ax.set_ylabel('PC2 (%.1f%%)' %(pca.explained_variance_ratio_[1]*100))
+
+    plt.savefig(os.path.join(resultsDir, 'pca.png'))
+    return
+
 def main():
 
     # if not output path specified - write to same directory as mzML files
@@ -373,14 +452,24 @@ def main():
     if not options.outPrefix:
         options.outPrefix = str(int(time.time()))
 
+    # create results directory
+    resultsDir = os.path.join(options.outDirectory, 'resutls' )
+    try:
+        os.mkdir( resultsDir )
+    except FileExistsError:
+        pass
+
     # read peptides and return dataframe containing peptides and intensity values
-    peptideIntensityMatrix = findPeptideIntensities()
+    peptideIntensityMatrix, dataFiles, peptides = findPeptideIntensities()
+
+    # pca plots
+    doPCAs(peptides, dataFiles, resultsDir)
 
     # do clustering
-    clusterMatrix, lut = doClustering(peptideIntensityMatrix)
+    clusterMatrix, lut = doClustering(peptideIntensityMatrix, dataFiles, resultsDir)
 
     #  analyse
-    doAnalysis(clusterMatrix, lut)
+    doAnalysis(clusterMatrix, lut, resultsDir)
 
 if __name__ == '__main__':
     main()
