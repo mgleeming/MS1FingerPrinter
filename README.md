@@ -26,9 +26,9 @@ The additional parameters can be varied as per above>. For example, to change th
 
 
 # Options
-    usage: ms1FingerPrinter.py [-h] [--outDirectory OUTDIRECTORY] [--outPrefix OUTPREFIX] [--ppm PPM] 
-                               [--minFrac MINFRAC] [--missed MISSED] [--minLength MINLENGTH] [--maxCharge MAXCHARGE]
-                               [--minCharge MINCHARGE] [--numClusters NUMCLUSTERS] [--noZtransform] [--normaliseIntensities]
+    usage: ms1FingerPrinter.py [-h] [--outDirectory OUTDIRECTORY] [--outPrefix OUTPREFIX]
+                               [--ppm PPM] [--minFrac MINFRAC] [--missed MISSED] [--minLength MINLENGTH] [--maxCharge MAXCHARGE]
+                               [--minCharge MINCHARGE] [--numClusters NUMCLUSTERS] [--noZtransform] [--normaliseIntensities] [--noLog] [--pvalThreshold PVALTHRESHOLD]
                                fasta mzml
 
     Find signals in MS1 data matching tryptic peptides
@@ -57,8 +57,9 @@ The additional parameters can be varied as per above>. For example, to change th
       --noZtransform        Do not perform z-transform on peptide intensity values
       --normaliseIntensities
                             Normalise target intensity values to spectral maxima
-
-
+      --noLog               Do not log-transform target intensity values.
+      --pvalThreshold PVALTHRESHOLD
+                            Negative Log 10 p-value threshold required of peptides for inclusion
 
 # Requirements
 

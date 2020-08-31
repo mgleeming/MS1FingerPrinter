@@ -72,15 +72,13 @@ argparser.add_argument('--noZtransform',
 argparser.add_argument('--normaliseIntensities',
                    action = 'store_true',
                    help = 'Normalise target intensity values to spectral maxima')
-argparser.add_argument('--logIntensities',
+argparser.add_argument('--noLog',
                    action = 'store_true',
-                   help = 'Log 10 transform target intensity values.')
+                   help = 'Do not log-transform target intensity values.')
 argparser.add_argument('--pvalThreshold',
                     type = float,
                     default = 1,
                     help = 'Negative Log 10 p-value threshold required of peptides for inclusion')
-
-
 
 options = argparser.parse_args()
 
@@ -188,10 +186,11 @@ def findPeptideIntensities():
 
                         if options.normaliseIntensities:
                             dataPoint = ints[mask].max() / scanMaxIntensity * 100
-                        if options.logIntensities and dataPoint >= 1:
-                            dataPoint = math.log10(dataPoint)
-                        else:
-                            dataPoint = 0
+                        if not options.noLog:
+                            if dataPoint >= 1:
+                                dataPoint = math.log10(dataPoint)
+                            else:
+                                dataPoint = 0
 
                         t.setIntensity(dataFile, dataPoint)
 
@@ -212,7 +211,6 @@ def findPeptideIntensities():
                 # --- require that any peak be present in > some fraction of all scans
 
                 pointValues = [pv for pv in t.targetIntensityDIct[dataFile] if pv != 0]
-
                 if len(pointValues) < len(t.targetIntensityDIct[dataFile]) * options.minFrac:
                     quantVals.append(0)
                 else:
@@ -450,7 +448,7 @@ def main():
 
     # assign datestamp to output files if no prefix given
     if not options.outPrefix:
-        options.outPrefix = str(int(time.time()))
+        options.outPrefix = ''
 
     # create results directory
     resultsDir = os.path.join(options.outDirectory, 'resutls' )
