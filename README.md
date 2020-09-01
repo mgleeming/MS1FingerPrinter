@@ -26,9 +26,13 @@ The additional parameters can be varied as per above>. For example, to change th
 
 
 # Options
-    usage: ms1FingerPrinter.py [-h] [--outDirectory OUTDIRECTORY] [--outPrefix OUTPREFIX]
-                               [--ppm PPM] [--minFrac MINFRAC] [--missed MISSED] [--minLength MINLENGTH] [--maxCharge MAXCHARGE]
-                               [--minCharge MINCHARGE] [--numClusters NUMCLUSTERS] [--noZtransform] [--normaliseIntensities] [--noLog] [--pvalThreshold PVALTHRESHOLD]
+    usage: ms1FingerPrinter.py [-h] [--outDirectory OUTDIRECTORY]
+                               [--outPrefix OUTPREFIX] [--groups GROUPS [GROUPS ...]]
+                               [--ppm PPM] [--minFrac MINFRAC] [--missed MISSED]
+                               [--minLength MINLENGTH] [--maxCharge MAXCHARGE]
+                               [--minCharge MINCHARGE] [--numClusters NUMCLUSTERS]
+                               [--noZtransform] [--normaliseIntensities] [--noLog]
+                               [--pvalThreshold PVALTHRESHOLD]
                                fasta mzml
 
     Find signals in MS1 data matching tryptic peptides
@@ -40,12 +44,25 @@ The additional parameters can be varied as per above>. For example, to change th
     optional arguments:
       -h, --help            show this help message and exit
       --outDirectory OUTDIRECTORY
-                            Directory to which output file should be written. Defaults to mzml directory if not specified
+                            Directory to which output file should be written. Defaults
+                            to mzml directory if not specified
       --outPrefix OUTPREFIX
-                            File name prefix given to generated outputs. Defaults to a timestamp if not specified
-      --ppm PPM             MS1 ppm tolerance for expected monoisotopic masses. Window is +/- ppm
-      --minFrac MINFRAC     Minimum fraction (0-1) of MS1 spectra in which a given target ion must be present for further consideration in the analysis
-      --missed MISSED       Number of missed enzymatic cleavages to allow for in silico protein digestion
+                            File name prefix given to generated outputs. Defaults to a
+                            timestamp if not specified
+      --groups GROUPS [GROUPS ...]
+                            Treatment group labels used for determination of statistical
+                            significance. These labels are compared to the input mzML
+                            file names to assign individual files to treatment groups.
+                            If not given, all files are treated independently and
+                            statistical testing not applied. Group labels must not
+                            contin spaces.
+      --ppm PPM             MS1 ppm tolerance for expected monoisotopic masses. Window
+                            is +/- ppm
+      --minFrac MINFRAC     Minimum fraction (0-1) of MS1 spectra in which a given
+                            target ion must be present for further consideration in the
+                            analysis
+      --missed MISSED       Number of missed enzymatic cleavages to allow for in silico
+                            protein digestion
       --minLength MINLENGTH
                             Minimum peptide length for consideration in analysis
       --maxCharge MAXCHARGE
@@ -59,7 +76,8 @@ The additional parameters can be varied as per above>. For example, to change th
                             Normalise target intensity values to spectral maxima
       --noLog               Do not log-transform target intensity values.
       --pvalThreshold PVALTHRESHOLD
-                            Negative Log 10 p-value threshold required of peptides for inclusion
+                            Negative Log 10 p-value threshold required of peptides for
+                            inclusion
 
 # Requirements
 

@@ -12,6 +12,7 @@ from sklearn.decomposition import PCA
 from sklearn.cluster import AgglomerativeClustering
 from scipy.stats import zscore, ttest_ind, f_oneway
 
+pd.options.mode.chained_assignment = None
 IAA_MOD_MASS = mass.calculate_mass(formula='CH2CONH')
 
 argparser = argparse.ArgumentParser(description = 'Find signals in MS1 data matching tryptic peptides')
@@ -30,6 +31,12 @@ argparser.add_argument('--outDirectory',
 argparser.add_argument('--outPrefix',
                     type = str,
                     help = 'File name prefix given to generated outputs. Defaults to a timestamp if not specified')
+
+argparser.add_argument('--groups',
+                    nargs = '+',
+                    help = 'Treatment group labels used for determination of statistical significance. These labels are compared to the input mzML file\
+                       names to assign individual files to treatment groups. If not given, all files are treated independently and statistical testing not applied. \
+                       Group labels must not contin spaces.')
 
 # MS matching
 argparser.add_argument('--ppm',
@@ -160,7 +167,7 @@ def findPeptideIntensities():
     dataFiles = sorted([x for x in files if '.mzml' in x.lower()])
 
     for dataFile in dataFiles:
-        print('Processing %s' %dataFile)
+        print('\tProcessing %s' %dataFile)
 
         mzml_file = os.path.join(options.mzml, dataFile)
         run = pymzml.run.Reader(mzml_file)
@@ -235,6 +242,7 @@ def findPeptideIntensities():
     df['key'] = df['peptide'] + '_+' + df['charge'].astype(str)
     df = df.set_index('key')
 
+    print('\tDone...')
     return df, dataFiles, peptides
 
 
@@ -243,29 +251,40 @@ def doClustering(df, dataFiles, resultsDir):
     # create subset from quantification columns
     quantDF, cbLabel, quantCols = getQuantDataFrame(df)
 
-    groups = ['DMSO', 'Hex', 'additive']
 
-    groupMap = {}
+    # assign samples to groups if specified
+    if options.groups:
+        groupMap = {}
+        for g in options.groups:
+            for dataFile in dataFiles:
+                if g in dataFile:
+                    try:
+                        groupMap[g].append(dataFile)
+                    except:
+                        groupMap[g] = [dataFile]
 
-    for g in groups:
-        for dataFile in dataFiles:
-            if g in dataFile:
-                try:
-                    groupMap[g].append(dataFile)
-                except:
-                    groupMap[g] = [dataFile]
 
-    significantRows = []
-    for index, row in quantDF.iterrows():
-        groupedRowData = [row[entries].to_list() for entries in groupMap.values()]
-        f, pval = f_oneway(*groupedRowData)
-        nlogp = math.log10(pval) * -1
+        print('\n\tSample group assignment')
+        print('\t-----------------------')
+        for k,v in groupMap.items():
+            for sample in v:
+                print('\tGroup: %s, Sample: %s' %(k, sample))
 
-        if nlogp > options.pvalThreshold:
-            significantRows.append(index)
+        significantRows = []
+        for index, row in quantDF.iterrows():
+            groupedRowData = [row[entries].to_list() for entries in groupMap.values()]
+            f, pval = f_oneway(*groupedRowData)
+            nlogp = math.log10(pval) * -1
 
-    quantDF = quantDF[quantDF.index.isin(significantRows)]
-    df = df[df.index.isin(significantRows)]
+            if nlogp > options.pvalThreshold:
+                significantRows.append(index)
+
+        print('\n\t%s targets before statistical filtering' %len(quantDF))
+        quantDF = quantDF[quantDF.index.isin(significantRows)]
+        df = df[df.index.isin(significantRows)]
+        print('\t%s targets after statistical filtering' %len(quantDF))
+    else:
+        print('\n\t%s targets identified' %len(quantDF))
 
     cluster = AgglomerativeClustering(n_clusters = options.numClusters)
     cluster.fit_predict(quantDF)
@@ -286,12 +305,12 @@ def doClustering(df, dataFiles, resultsDir):
         quantDF, cmap = 'coolwarm', cbar_kws={'label': cbLabel}, row_colors = row_colors)
 
     # write figure to file
-    outFigure = os.path.join(resultsDir, options.outPrefix + '_clustermap')
+    outFigure = os.path.join(resultsDir, options.outPrefix + 'clustermap')
 
     savefig(plot, plot, outFigure)
 
     # write data frame to excel file
-    outExcelFile = os.path.join(resultsDir, options.outPrefix + '_datatable.xlsx')
+    outExcelFile = os.path.join(resultsDir, options.outPrefix + 'datatable.xlsx')
 
     df = df.sort_values('cluster')
     writer = pd.ExcelWriter(outExcelFile, engine='xlsxwriter')
@@ -326,6 +345,7 @@ def doClustering(df, dataFiles, resultsDir):
             'format':   formati})
 
     writer.save()
+    print('\tDone...')
     return df, lut
 
 def doAnalysis(clusterMatrix, lut, resultsDir):
@@ -336,13 +356,14 @@ def doAnalysis(clusterMatrix, lut, resultsDir):
 
     subClusterMatrix = clusterMatrix[targetColumns]
     densityPlot = sns.pairplot( data=subClusterMatrix, hue = 'cluster', palette = lut)
-    savefig(densityPlot, densityPlot, os.path.join(resultsDir, "pairs.png"))
+    savefig(densityPlot, densityPlot, os.path.join(resultsDir, options.outPrefix + "pairs.png"))
 
     sns.set_style("darkgrid")
     fig, ax = plt.subplots()
     catPlot = sns.countplot(x="charge",  data=clusterMatrix, hue = 'cluster', palette = lut, ax = ax)
     ax.legend(loc='upper right')
-    savefig(catPlot, fig, os.path.join(resultsDir, "cluster_charge_histogram.png"))
+    savefig(catPlot, fig, os.path.join(resultsDir, options.outPrefix + "cluster_charge_histogram.png"))
+    print('\tDone...')
 
 def getQuantDataFrame(df):
     quantCols = [x for x in list(df) if '.mzml' in x.lower()]
@@ -386,7 +407,6 @@ def savefig(plot, fig, path, resolution = 400):
             except:
                 # hope for the best
                 return
-
 
 def appendToDict(d, key, value):
     try:
@@ -437,7 +457,8 @@ def doPCAs(peptides, dataFiles, resultsDir):
     ax.set_xlabel('PC1 (%.1f%%)' %(pca.explained_variance_ratio_[0]*100))
     ax.set_ylabel('PC2 (%.1f%%)' %(pca.explained_variance_ratio_[1]*100))
 
-    plt.savefig(os.path.join(resultsDir, 'pca.png'))
+    plt.savefig(os.path.join(resultsDir, options.outPrefix + 'pca.png'))
+    print('\tDone...')
     return
 
 def main():
@@ -446,8 +467,9 @@ def main():
     if not options.outDirectory:
         options.outDirectory = options.mzml
 
-    # assign datestamp to output files if no prefix given
-    if not options.outPrefix:
+    if options.outPrefix:
+        options.outPrefix += '_'
+    else:
         options.outPrefix = ''
 
     # create results directory
@@ -457,17 +479,26 @@ def main():
     except FileExistsError:
         pass
 
+    print('Processing sample data')
+    print('======================')
     # read peptides and return dataframe containing peptides and intensity values
     peptideIntensityMatrix, dataFiles, peptides = findPeptideIntensities()
 
+    print('\n\nRunning PCA')
+    print('===========')
     # pca plots
     doPCAs(peptides, dataFiles, resultsDir)
 
+    print('\n\nClustering Feature Data')
+    print('=======================')
     # do clustering
     clusterMatrix, lut = doClustering(peptideIntensityMatrix, dataFiles, resultsDir)
 
+    print('\n\nRunning Summary Analysis')
+    print('========================')
     #  analyse
     doAnalysis(clusterMatrix, lut, resultsDir)
 
+    print('\n\nAll Done!')
 if __name__ == '__main__':
     main()
