@@ -231,6 +231,7 @@ def findPeptideIntensities():
             toPrint += quantVals
             of1.write('%s\n' %('\t'.join([str(x) for x in toPrint])))
 
+            print('%s\n' %('\t'.join([str(x) for x in toPrint])))
     # return pointer to beginning of file
     of1.seek(0)
 
@@ -251,6 +252,8 @@ def doClustering(df, dataFiles, resultsDir):
     # create subset from quantification columns
     quantDF, cbLabel, quantCols = getQuantDataFrame(df)
 
+    # for Ali - 2 March 21
+    quantDF = quantDF.fillna(0)
 
     # assign samples to groups if specified
     if options.groups:
