@@ -31,7 +31,6 @@ argparser.add_argument('--outDirectory',
 argparser.add_argument('--outPrefix',
                     type = str,
                     help = 'File name prefix given to generated outputs. Defaults to a timestamp if not specified')
-
 argparser.add_argument('--groups',
                     nargs = '+',
                     help = 'Treatment group labels used for determination of statistical significance. These labels are compared to the input mzML file\
@@ -87,6 +86,13 @@ argparser.add_argument('--pvalThreshold',
                     default = 1,
                     help = 'Negative Log 10 p-value threshold required of peptides for inclusion')
 
+# reporting
+argparser.add_argument('--reportAll',
+                    action = 'store_true',
+                    help = 'If given, all charge states for all peptides will be listed separately in the outputs. \
+                       Otherwise, only the most abundant charge state of each peptide in each group will be reported',
+                    )
+
 options = argparser.parse_args()
 
 class Target(object):
@@ -122,6 +128,13 @@ class Target(object):
             self.targetScanCounter[file] = 1
         return
 
+    def getAverageIntensity(self, file):
+        values = [float(v) for v in self.targetIntensityDIct[file]]
+        try:
+            return float(sum(values)) / float(len(values))
+        except ZeroDivisionError:
+            return 0
+
 class Peptide(object):
 
     def __init__(self, peptide):
@@ -147,6 +160,66 @@ class Peptide(object):
             )
 
         return
+
+    def findChargeStatesToReport(self, groupMap, groups):
+
+        valuesToReturn = []
+
+        quantSum = 0
+        for group in groups:
+            files = groupMap[group]
+
+            # need to get the intensities for each target for each file in this group
+            groupDataList = []
+            for t in self.targetList:
+                groupData = {}
+
+                # save target for later
+                groupData['target'] = t
+                groupData['charge'] = t.charge
+
+                # average intensity excludes 0 values for now - data is fairly bouncy - do we want this?
+                groupData['abundances'] = [t.getAverageIntensity(f) for f in files]
+                groupData['numNonZero'] = len([_ for _ in groupData['abundances'] if _ != 0])
+
+                # not all targets have non-zero intensity
+                try:
+                    groupData['avgAbundance'] = float(sum(groupData['abundances'])) #/ float(len(groupData['abundances']))
+                except ZeroDivisionError:
+                    groupData['avgAbundance'] = 0
+
+                groupDataList.append(groupData)
+
+            # sort targets based on average abundance - highest first
+            groupDataList = sorted(groupDataList, key = lambda i: i['avgAbundance'], reverse = True)
+
+            # first value is max avg intensity
+            mostIntenseTarget = groupDataList[0]
+
+            quantVals = []
+            for f in files:
+                # quite a bit of bouncy-ness to the data
+                # --- require that any peak be present in > some fraction of all scans
+                pointValues = [pv for pv in mostIntenseTarget['target'].targetIntensityDIct[f] if pv != 0]
+                if len(pointValues) < len(mostIntenseTarget['target'].targetIntensityDIct[f]) * options.minFrac:
+                    quantVals.append(0)
+                else:
+                    # not all file have same # of scans - average
+                    quantVals.append(mostIntenseTarget['target'].getAverageIntensity(f))
+
+            if self.peptide == 'ADLAKYICDNQDTISSK':
+                print(group)
+                print(len(pointValues), options.minFrac)
+                print(groupDataList)
+
+            quantSum += sum(quantVals)
+            # create list of values to print
+            valuesToReturn.extend(quantVals)
+            valuesToReturn.append(mostIntenseTarget['target'].charge)
+            valuesToReturn.append(mostIntenseTarget['target'].target)
+            valuesToReturn.append(mostIntenseTarget['target'].targetLL)
+            valuesToReturn.append(mostIntenseTarget['target'].targetHL)
+        return valuesToReturn, quantSum
 
 def digetsProteinFromFASTA():
     sequenceIter = fasta.read(source = options.fasta)
@@ -205,47 +278,97 @@ def findPeptideIntensities():
 
     of1 = io.StringIO()
 
-    toPrint = ['peptide', 'neutral_sequence_mass', 'neutral_modifications_mass', 'neutral_peptide_mass', 'length', 'charge','mz', 'mz_lower', 'mz_upper']
-    toPrint += dataFiles
-    of1.write('%s\n' %('\t'.join([str(x) for x in toPrint])))
+    if options.reportAll:
+        toPrint = ['peptide', 'neutral_sequence_mass', 'neutral_modifications_mass', 'neutral_peptide_mass', 'length', 'charge','mz', 'mz_lower', 'mz_upper']
+        toPrint += dataFiles
+        of1.write('%s\n' %('\t'.join([str(x) for x in toPrint])))
+        for p in peptides:
+            for t in p.targetList:
+                toPrint = [
+                    p.peptide, p.neutral_unmodified, p.neutral_modification_masses, p.total_neutral_mass,
+                    p.peptideLength, t.charge, t.target, t.targetLL, t.targetHL
+                ]
+                quantVals = []
+                for dataFile in dataFiles:
+                    # quite a bit of bouncy-ness to the data
+                    # --- require that any peak be present in > some fraction of all scans
 
-    for p in peptides:
-        for t in p.targetList:
-            toPrint = [p.peptide, p.neutral_unmodified, p.neutral_modification_masses, p.total_neutral_mass, p.peptideLength, t.charge, t.target, t.targetLL, t.targetHL]
-            quantVals = []
-            for dataFile in dataFiles:
-                # quite a bit of bouncy-ness to the data
-                # --- require that any peak be present in > some fraction of all scans
+                    pointValues = [pv for pv in t.targetIntensityDIct[dataFile] if pv != 0]
+                    if len(pointValues) < len(t.targetIntensityDIct[dataFile]) * options.minFrac:
+                        quantVals.append(0)
+                    else:
+                        # not all file have same # of scans - average
+                        quantVals.append(t.getAverageIntensity(dataFile))
 
-                pointValues = [pv for pv in t.targetIntensityDIct[dataFile] if pv != 0]
-                if len(pointValues) < len(t.targetIntensityDIct[dataFile]) * options.minFrac:
-                    quantVals.append(0)
-                else:
-                    # not all file have same # of scans - average
-                    quantVals.append(int(sum(pointValues))/ len(pointValues))
+                # don't write any peptides/charge states that are not observed
+                # in at least one sample
+                if sum(quantVals) == 0: continue
 
-            # don't write any peptides/charge states that are not observed
-            # in at least one sample
-            if sum(quantVals) < 1: continue
+                toPrint += quantVals
+                of1.write('%s\n' %('\t'.join([str(x) for x in toPrint])))
+    else:
+        # headers will look different when charge data are summarised to peptides
+        # -- need to report charge used for each group
+        groupMap = makeGroupMap(dataFiles)
+        groups = list(groupMap.keys())
 
-            toPrint += quantVals
+        toPrint = ['peptide', 'neutral_sequence_mass', 'neutral_modifications_mass', 'neutral_peptide_mass', 'length']
+
+        for group in groups:
+            toPrint.extend(groupMap[group])
+            toPrint.extend( [
+                '%s charge' %group, '%s mz' %group, '%s mz_lower' %group, '%s mz_upper' %group
+            ])
+
+        of1.write('%s\n' %('\t'.join([str(x) for x in toPrint])))
+
+        for p in peptides:
+            toPrint = [ p.peptide, p.neutral_unmodified, p.neutral_modification_masses, p.total_neutral_mass, p.peptideLength ]
+            valuesToWrite, quantSum  = p.findChargeStatesToReport(groupMap, groups)
+
+            if quantSum == 0: continue
+
+            toPrint.extend(valuesToWrite)
             of1.write('%s\n' %('\t'.join([str(x) for x in toPrint])))
 
-            print('%s\n' %('\t'.join([str(x) for x in toPrint])))
     # return pointer to beginning of file
     of1.seek(0)
 
     # create dataframe from reulsts
     df = pd.read_csv(of1, delimiter = '\t')
 
-    # keys denote a given peptide in a given charge state
-    # these need to be unique to display properly in following plots
-    df['key'] = df['peptide'] + '_+' + df['charge'].astype(str)
-    df = df.set_index('key')
+    if options.reportAll:
+        # keys denote a given peptide in a given charge state
+        # these need to be unique to display properly in following plots
+        df['key'] = df['peptide'] + '_+' + df['charge'].astype(str)
+        df = df.set_index('key')
+    else:
+        # not present if charge states are summarised
+        # default back to peptide sequence
+        df['key'] = df['peptide']
+        df = df.set_index('key')
 
     print('\tDone...')
     return df, dataFiles, peptides
 
+def makeGroupMap(dataFiles):
+    groupMap = {}
+
+    if options.groups:
+        for g in options.groups:
+            for dataFile in dataFiles:
+                if g in dataFile:
+                    try:
+                        groupMap[g].append(dataFile)
+                    except:
+                        groupMap[g] = [dataFile]
+    else:
+        # no groupings specified
+        # treat each sample as its own group
+        for dataFile in dataFiles:
+            groupMap[dataFile] = [dataFile]
+
+    return groupMap
 
 def doClustering(df, dataFiles, resultsDir):
 
@@ -257,15 +380,8 @@ def doClustering(df, dataFiles, resultsDir):
 
     # assign samples to groups if specified
     if options.groups:
-        groupMap = {}
-        for g in options.groups:
-            for dataFile in dataFiles:
-                if g in dataFile:
-                    try:
-                        groupMap[g].append(dataFile)
-                    except:
-                        groupMap[g] = [dataFile]
 
+        groupMap = makeGroupMap(dataFiles)
 
         print('\n\tSample group assignment')
         print('\t-----------------------')
@@ -367,12 +483,14 @@ def doAnalysis(clusterMatrix, lut, resultsDir):
     ax.legend(loc='upper right')
     savefig(catPlot, fig, os.path.join(resultsDir, options.outPrefix + "cluster_charge_histogram.png"))
     print('\tDone...')
+    return
 
 def getQuantDataFrame(df):
     quantCols = [x for x in list(df) if '.mzml' in x.lower()]
 
     # create subset from quantification columns
     quantDF = df[quantCols]
+    print(quantDF)
 
     if not options.noZtransform:
         quantDF_T = quantDF.T
@@ -497,11 +615,13 @@ def main():
     # do clustering
     clusterMatrix, lut = doClustering(peptideIntensityMatrix, dataFiles, resultsDir)
 
-    print('\n\nRunning Summary Analysis')
-    print('========================')
-    #  analyse
-    doAnalysis(clusterMatrix, lut, resultsDir)
+    if options.reportAll:
+        print('\n\nRunning Summary Analysis')
+        print('========================')
+        #  analyse
+        doAnalysis(clusterMatrix, lut, resultsDir)
 
     print('\n\nAll Done!')
+
 if __name__ == '__main__':
     main()
