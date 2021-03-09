@@ -20,10 +20,23 @@ Eg:
 
     python ms1FingerPrinter.py /home/user/project/myprotein.fasta /home/user/project/mzml_files
 
-The additional parameters can be varied as per above>. For example, to change the maximum charge state considered::
+The additional parameters can be varied as per above>. For example, to change the maximum charge state considered:
 
     python ms1FingerPrinter.py /home/user/project/myprotein.fasta /home/user/project/mzml_files --maxCharge 6
 
+The default analysis will treat each sample independently. To create groups of replicate treatments:
+
+    python ms1FingerPrinter.py /home/user/project/myprotein.fasta /home/user/project/mzml_files --groups additive HexC DMSO
+
+The above will attempt to create three treatment groups (i.e. 'additive', 'HhexC' and 'DMSO') by matching these terms to the mzML file names in the provided mzML file directory. A mild statistical filter is then applied to retain only peptides reproducibly detected. The stringency of this filter can be altered as below:
+
+    python ms1FingerPrinter.py /home/user/project/myprotein.fasta /home/user/project/mzml_files --groups additive HexC DMSO --pvalThreshold 2
+
+Note that this is a -Log10 p-value. Set this threshold to 0 to remove the filter.
+
+Note that, by default, only the most abundant charge state for each peptide in each treatment group is reported. To include all charge states of all peptides in the output table, add the --reportAll flag:
+
+    python ms1FingerPrinter.py /home/user/project/myprotein.fasta /home/user/project/mzml_files --groups additive HexC DMSO --reportAll
 
 # Options
     usage: ms1FingerPrinter.py [-h] [--outDirectory OUTDIRECTORY]
